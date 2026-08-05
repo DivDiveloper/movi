@@ -1,5 +1,5 @@
 name = "movi"
-main = "src/index.js"
+main = "src/index.ts"
 compatibility_date = "2026-07-20"
 
 # קרון אוטומטי בכל בוקר ב-03:45 בבוקר שעון קיץ ישראל (00:45 UTC)
