@@ -1,10 +1,16 @@
 // הגדרת ממשקים עבור Cloudflare Worker ומשתני הסביבה
+interface CloudflareKV {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+}
+
 interface CloudflareExecutionContext {
   waitUntil(promise: Promise<any>): void;
 }
 
 interface Env {
-  AI: any; // Cloudflare Workers AI (גיבוי)
+  DATABASE?: CloudflareKV; // זיכרון KV למניעת כפילויות
+  AI: any;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_GROUP_ID?: string;
   YOUTUBE_API_KEY: string;
@@ -25,7 +31,7 @@ interface YouTubeVideoItem {
 }
 
 export default {
-  // 1. קריאה ידנית מופעלת ע"י הבוט הראשי בפקודה /movi
+  // 1. קריאה ידנית בפקודה /movi מהבוט הראשי
   async fetch(request: Request, env: Env, ctx: CloudflareExecutionContext): Promise<Response> {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -47,7 +53,7 @@ export default {
     }
   },
 
-  // 2. הרצה אוטומטית בכל בוקר ב-03:45 בבוקר שעון ישראל (00:45 UTC)
+  // 2. הרצה אוטומטית ב-03:45 בבוקר שעון ישראל (00:45 UTC)
   async scheduled(event: any, env: Env, ctx: CloudflareExecutionContext): Promise<void> {
     console.log("Cron Trigger fired for Movi Worker:", event.cron);
     const targetGroupId = env.TELEGRAM_GROUP_ID;
@@ -62,7 +68,7 @@ export default {
 };
 
 // ============================================================================
-// 🎬 תהליך איסוף, סינון ושליחת הסרטון
+// 🎬 תהליך איסוף, סינון מניעת כפילויות ושליחת הסרטון
 // ============================================================================
 
 async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempMsgId?: number): Promise<void> {
@@ -74,22 +80,41 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
 
   try {
     console.log("Fetching YouTube videos from the last 24 hours...");
-    const videos = await fetchYouTubeVideos(env);
+    const allVideos = await fetchYouTubeVideos(env);
 
-    if (videos.length === 0) {
+    if (allVideos.length === 0) {
       await sendTelegramVideo(env, chatId, "⚠️ ששון לא מצא סרטונים חדשים מ-24 השעות האחרונות בנושא 'נ נח נחמ נחמן מאומן'.", tempMsgId);
       return;
     }
 
-    console.log(`Found ${videos.length} YouTube videos from the last 24h.`);
+    // א. קריאת היסטוריית 3 הסרטונים האחרונים מה-KV
+    let sentVideoIds: string[] = [];
+    if (env.DATABASE) {
+      try {
+        const rawHistory = await env.DATABASE.get("movi_recent_videos");
+        if (rawHistory) {
+          sentVideoIds = JSON.parse(rawHistory);
+          console.log("Loaded recent sent video IDs from KV:", sentVideoIds);
+        }
+      } catch (e) {
+        console.warn("Failed to read sent videos history from KV:", e);
+      }
+    }
 
-    let selectedVideo = videos[0];
-    let aiReason = "נבחר כסרטון העדכני ביותר מ-24 השעות האחרונות.";
+    // ב. סינון החוצה של סרטונים שכבר נשלחו ב-3 הריצות האחרונות
+    const freshVideos = allVideos.filter(v => !sentVideoIds.includes(v.videoId));
+    const availableVideos = freshVideos.length > 0 ? freshVideos : allVideos;
+
+    console.log(`Available fresh videos for selection: ${availableVideos.length}`);
+
+    // ג. בחירת הסרטון האיכותי ביותר מתוך הסרטונים החדשים באמצעות AI
+    let selectedVideo = availableVideos[0];
+    let aiReason = "נבחר כסרטון העדכני והחדש ביותר מ-24 השעות האחרונות.";
 
     try {
-      const aiDecision = await selectBestVideoWithAI(videos, env);
+      const aiDecision = await selectBestVideoWithAI(availableVideos, env);
       if (aiDecision && aiDecision.videoId) {
-        const found = videos.find(v => v.videoId === aiDecision.videoId);
+        const found = availableVideos.find(v => v.videoId === aiDecision.videoId);
         if (found) {
           selectedVideo = found;
         }
@@ -98,9 +123,10 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
         }
       }
     } catch (aiErr) {
-      console.warn("AI filtering failed, falling back to top YouTube result:", aiErr);
+      console.warn("AI filtering failed, falling back to top available video:", aiErr);
     }
 
+    // ד. שליחת הסרטון לטלגרם
     const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.videoId}`;
     const textMessage = `🎬 *סרטון נ נח יומי עבור כבוד הרב:*\n\n` +
                         `🎥 *${selectedVideo.title}*\n` +
@@ -109,6 +135,17 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
                         `${videoUrl}`;
 
     await sendTelegramVideo(env, chatId, textMessage, tempMsgId, videoUrl);
+
+    // ה. עדכון ה-KV ושמירת 3 ה-Video IDs האחרונים
+    if (env.DATABASE && selectedVideo?.videoId) {
+      try {
+        const updatedHistory = [selectedVideo.videoId, ...sentVideoIds.filter(id => id !== selectedVideo.videoId)].slice(0, 3);
+        await env.DATABASE.put("movi_recent_videos", JSON.stringify(updatedHistory));
+        console.log("Updated recent sent video IDs in KV:", updatedHistory);
+      } catch (e) {
+        console.warn("Failed to update sent videos history in KV:", e);
+      }
+    }
 
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
