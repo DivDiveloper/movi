@@ -9,7 +9,7 @@ interface CloudflareExecutionContext {
 }
 
 interface Env {
-  DATABASE?: CloudflareKV; // זיכרון KV למניעת כפילויות
+  DATABASE?: CloudflareKV; // זיכרון KV למניעת כפילויות 3 הסרטונים האחרונים
   AI: any;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_GROUP_ID?: string;
@@ -31,7 +31,7 @@ interface YouTubeVideoItem {
 }
 
 export default {
-  // 1. קריאה ידנית בפקודה /movi מהבוט הראשי
+  // 1. קריאה ידנית מהבוט הראשי בפקודה /movi
   async fetch(request: Request, env: Env, ctx: CloudflareExecutionContext): Promise<Response> {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -68,7 +68,7 @@ export default {
 };
 
 // ============================================================================
-// 🎬 תהליך איסוף, סינון מניעת כפילויות ושליחת הסרטון
+// 🎬 תהליך איסוף, סינון, מניעת כפילויות ושליחת הסרטון
 // ============================================================================
 
 async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempMsgId?: number): Promise<void> {
@@ -87,7 +87,7 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       return;
     }
 
-    // א. קריאת היסטוריית 3 הסרטונים האחרונים מה-KV
+    // א. קריאת היסטוריית 3 הסרטונים האחרונים מ-KV
     let sentVideoIds: string[] = [];
     if (env.DATABASE) {
       try {
@@ -101,7 +101,7 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       }
     }
 
-    // ב. סינון החוצה של סרטונים שכבר נשלחו ב-3 הריצות האחרונות
+    // ב. סינון החוצה של 3 הסרטונים האחרונים שנשלחו
     const freshVideos = allVideos.filter(v => !sentVideoIds.includes(v.videoId));
     const availableVideos = freshVideos.length > 0 ? freshVideos : allVideos;
 
