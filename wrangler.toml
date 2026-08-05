@@ -1,13 +1,17 @@
 name = "movi"
-main = "src/index.ts"
+main = "src/index.js"
 compatibility_date = "2026-07-20"
 
-# קרון אוטומטי ב-03:45 בבוקר שעון קיץ ישראל (00:45 UTC)
+# קרון אוטומטי בכל בוקר ב-03:45 בבוקר שעון קיץ ישראל (00:45 UTC)
 [triggers]
 crons = ["45 0 * * *"]
 
 [vars]
-TELEGRAM_GROUP_ID = "-100xxxxxxxxxx" # הוחלף ב-ID הקבוצה שלך
+TELEGRAM_GROUP_ID = "-1003905629404" # הוחלף ב-ID הקבוצה שלך
 
 [ai]
 binding = "AI" # בינדינג ל-Workers AI (גיבוי)
+
+[[kv_namespaces]]
+binding = "DATABASE"
+id = "242c3678f46f4aafa6c92929e2eecaaa" # מזהה ה-KV לשמירת 3 הסרטונים האחרונים
