@@ -1,0 +1,13 @@
+name = "movi"
+main = "src/index.ts"
+compatibility_date = "2026-07-20"
+
+# קרון אוטומטי ב-03:45 בבוקר שעון קיץ ישראל (00:45 UTC)
+[triggers]
+crons = ["45 0 * * *"]
+
+[vars]
+TELEGRAM_GROUP_ID = "-100xxxxxxxxxx" # הוחלף ב-ID הקבוצה שלך
+
+[ai]
+binding = "AI" # בינדינג ל-Workers AI (גיבוי)
