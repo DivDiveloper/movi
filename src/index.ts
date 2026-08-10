@@ -1,4 +1,4 @@
-// הגדרת ממשקים עבור Cloudflare Worker ומשתני הסביבה
+// הגדרת ממשקים עבור Cloudflare Worker
 interface CloudflareKV {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
@@ -109,7 +109,7 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
 
     console.log(`Available fresh videos for selection: ${availableVideos.length}`);
 
-    // ג. בחירת הסרטון האיכותי ביותר מתוך הסרטונים החדשים באמצעות AI
+    // ג. אתחול ברירת המחדל אך ורק מתוך רשימת הסרטונים הטריים!
     let selectedVideo = availableVideos[0];
     let aiReason = "נבחר כסרטון העדכני והחדש ביותר מ-24 השעות האחרונות.";
 
