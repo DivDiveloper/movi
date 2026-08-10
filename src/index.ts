@@ -279,7 +279,7 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
 }
 
 // ============================================================================
-// 📩 שליחה לטלגרם עם תצוגה מקדימה נגנת (In-App Preview)
+// 📩 שליחה לטלגרם עם Fallback חסין לשגיאות Markdown בכותרות יוטיוב
 // ============================================================================
 
 async function sendTelegramVideo(env: Env, chatId: string, text: string, messageId?: number, videoUrl?: string): Promise<any> {
@@ -313,8 +313,33 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
 
   const resJson = await res.json() as any;
 
-  if (!resJson.ok && messageId) {
-    return sendTelegramVideo(env, chatId, text, undefined, videoUrl);
+  // ⚠️ התיקון: אם טלגרם דוחה עקב תווים מיוחדים בכותרת הסרטון, נשלח שוב כטקסט נקי
+  if (!resJson.ok) {
+    console.warn("Telegram video send with Markdown failed:", resJson.description, "Retrying without Markdown...");
+    const fallbackPayload: any = {
+      chat_id: chatId,
+      text: text.replace(/[*_`#~[\]()]/g, "") // ניקוי תווי מארקדאון מיוחדים בכותרות
+    };
+
+    if (videoUrl) {
+      fallbackPayload.link_preview_options = {
+        is_disabled: false,
+        url: videoUrl,
+        prefer_large_media: true
+      };
+    }
+
+    if (messageId) {
+      fallbackPayload.message_id = messageId;
+    }
+
+    const fallbackRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fallbackPayload),
+      signal: AbortSignal.timeout(10000)
+    });
+    return fallbackRes.json();
   }
 
   return resJson;
