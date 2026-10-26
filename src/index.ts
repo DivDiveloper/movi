@@ -18,7 +18,6 @@ interface Env {
 
 interface MoviRequest {
   chatId?: string;
-  tempMsgId?: number;
 }
 
 interface YouTubeVideoItem {
@@ -36,9 +35,9 @@ export default {
     }
 
     try {
-      const { chatId, tempMsgId } = await request.json() as MoviRequest;
+      const { chatId } = await request.json() as MoviRequest;
 
-      ctx.waitUntil(processAndSendYouTubeVideo(env, chatId, tempMsgId));
+      ctx.waitUntil(processAndSendYouTubeVideo(env, chatId));
 
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -64,8 +63,14 @@ export default {
   }
 };
 
-async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempMsgId?: number): Promise<void> {
+async function processAndSendYouTubeVideo(env: Env, targetChatId?: string): Promise<void> {
   const targetGroupId = env.TELEGRAM_GROUP_ID;
+  const destinationChatId = targetChatId || targetGroupId;
+
+  if (!destinationChatId) {
+    console.error("No target chat ID available for sending video.");
+    return;
+  }
 
   try {
     console.log("Fetching YouTube videos from the last 24 hours...");
@@ -73,12 +78,7 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
 
     if (allVideos.length === 0) {
       const noVideoMsg = "⚠️ ששון לא מצא סרטונים חדשים מ-24 השעות האחרונות בנושא 'נ נח נחמ נחמן מאומן'.";
-      if (targetGroupId && targetChatId && targetChatId !== targetGroupId) {
-        if (tempMsgId) await sendTelegramVideo(env, targetChatId, noVideoMsg, tempMsgId);
-        await sendTelegramVideo(env, targetGroupId, noVideoMsg);
-      } else {
-        await sendTelegramVideo(env, targetChatId || targetGroupId!, noVideoMsg, tempMsgId);
-      }
+      await sendTelegramMessage(env, destinationChatId, noVideoMsg);
       return;
     }
 
@@ -125,14 +125,8 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
                         `💡 *מדוע נבחר:* ${aiReason}\n\n` +
                         `${videoUrl}`;
 
-    if (targetGroupId && targetChatId && targetChatId !== targetGroupId) {
-      if (tempMsgId) {
-        await sendTelegramVideo(env, targetChatId, "🎬 הסרטון היומי נאסף ונשלח כעת לקבוצה של כבוד הרב!", tempMsgId);
-      }
-      await sendTelegramVideo(env, targetGroupId, textMessage, undefined, videoUrl);
-    } else {
-      await sendTelegramVideo(env, targetChatId || targetGroupId!, textMessage, tempMsgId, videoUrl);
-    }
+    // שליחת הסרטון ליעד הסופי
+    await sendTelegramMessage(env, destinationChatId, textMessage, videoUrl);
 
     if (env.DATABASE && selectedVideo?.videoId) {
       try {
@@ -147,11 +141,9 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("Error in processAndSendYouTubeVideo:", errMsg);
-    if (targetChatId) {
-      try {
-        await sendTelegramVideo(env, targetChatId, `⚠️ ששון נתקל בשגיאה בעת הבאת הסרטון: ${errMsg}`, tempMsgId);
-      } catch {}
-    }
+    try {
+      await sendTelegramMessage(env, destinationChatId, `⚠️ ששון נתקל בשגיאה בעת הבאת הסרטון: ${errMsg}`);
+    } catch {}
   }
 }
 
@@ -257,9 +249,8 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
   return null;
 }
 
-async function sendTelegramVideo(env: Env, chatId: string, text: string, messageId?: number, videoUrl?: string): Promise<any> {
-  const method = messageId ? "editMessageText" : "sendMessage";
-  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
+async function sendTelegramMessage(env: Env, chatId: string, text: string, videoUrl?: string): Promise<any> {
+  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
   const payload: any = {
     chat_id: chatId,
@@ -275,10 +266,6 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
     };
   }
 
-  if (messageId) {
-    payload.message_id = messageId;
-  }
-
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -289,10 +276,22 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
   const resJson = await res.json() as any;
 
   if (!resJson.ok) {
-    console.warn("Telegram video send with Markdown failed:", resJson.description, "Retrying without Markdown after delay...");
-    
-    // השהייה של שנייה אחת למניעת ספאם / Too Many Requests בטלגרם
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.warn("Telegram send with Markdown failed:", resJson.description);
+
+    let waitSeconds = 1;
+    if (resJson.parameters && resJson.parameters.retry_after) {
+      waitSeconds = resJson.parameters.retry_after;
+    } else if (resJson.description) {
+      const match = resJson.description.match(/retry after (\d+)/i);
+      if (match && match[1]) {
+        waitSeconds = parseInt(match[1], 10);
+      }
+    }
+
+    if (waitSeconds > 1) {
+      console.log(`Waiting ${waitSeconds} seconds as requested by Telegram...`);
+      await new Promise(resolve => setTimeout(resolve, (waitSeconds + 1) * 1000));
+    }
 
     const fallbackPayload: any = {
       chat_id: chatId,
@@ -307,15 +306,11 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
       };
     }
 
-    if (messageId) {
-      fallbackPayload.message_id = messageId;
-    }
-
     const fallbackRes = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fallbackPayload),
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(15000)
     });
     return fallbackRes.json();
   }
