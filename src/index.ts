@@ -289,7 +289,11 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
   const resJson = await res.json() as any;
 
   if (!resJson.ok) {
-    console.warn("Telegram video send with Markdown failed:", resJson.description, "Retrying without Markdown...");
+    console.warn("Telegram video send with Markdown failed:", resJson.description, "Retrying without Markdown after delay...");
+    
+    // השהייה של שנייה אחת למניעת ספאם / Too Many Requests בטלגרם
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     const fallbackPayload: any = {
       chat_id: chatId,
       text: text.replace(/[*_`#~[\]()]/g, "")
