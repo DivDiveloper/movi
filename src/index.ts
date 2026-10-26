@@ -125,7 +125,6 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string): Prom
                         `💡 *מדוע נבחר:* ${aiReason}\n\n` +
                         `${videoUrl}`;
 
-    // שליחת הסרטון ליעד הסופי
     await sendTelegramMessage(env, destinationChatId, textMessage, videoUrl);
 
     if (env.DATABASE && selectedVideo?.videoId) {
@@ -252,9 +251,12 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
 async function sendTelegramMessage(env: Env, chatId: string, text: string, videoUrl?: string): Promise<any> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
+  // ניקוי מראש של תווים בעייתיים כדי שהמארקדאון של טלגרם לעולם לא יקרוס
+  const safeText = text.replace(/[*_`#~[\]()]/g, "");
+
   const payload: any = {
     chat_id: chatId,
-    text: text,
+    text: safeText,
     parse_mode: "Markdown"
   };
 
@@ -276,43 +278,7 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string, video
   const resJson = await res.json() as any;
 
   if (!resJson.ok) {
-    console.warn("Telegram send with Markdown failed:", resJson.description);
-
-    let waitSeconds = 1;
-    if (resJson.parameters && resJson.parameters.retry_after) {
-      waitSeconds = resJson.parameters.retry_after;
-    } else if (resJson.description) {
-      const match = resJson.description.match(/retry after (\d+)/i);
-      if (match && match[1]) {
-        waitSeconds = parseInt(match[1], 10);
-      }
-    }
-
-    if (waitSeconds > 1) {
-      console.log(`Waiting ${waitSeconds} seconds as requested by Telegram...`);
-      await new Promise(resolve => setTimeout(resolve, (waitSeconds + 1) * 1000));
-    }
-
-    const fallbackPayload: any = {
-      chat_id: chatId,
-      text: text.replace(/[*_`#~[\]()]/g, "")
-    };
-
-    if (videoUrl) {
-      fallbackPayload.link_preview_options = {
-        is_disabled: false,
-        url: videoUrl,
-        prefer_large_media: true
-      };
-    }
-
-    const fallbackRes = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fallbackPayload),
-      signal: AbortSignal.timeout(15000)
-    });
-    return fallbackRes.json();
+    console.warn("Telegram send failed:", resJson.description);
   }
 
   return resJson;
