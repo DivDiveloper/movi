@@ -65,6 +65,8 @@ export default {
 
 async function processAndSendYouTubeVideo(env: Env, targetChatId?: string): Promise<void> {
   const targetGroupId = env.TELEGRAM_GROUP_ID;
+  
+  // תעדוף ששון לשלוח ליוזר בפרטי אם הגיע chatId, ואם לא (כמו ב-Cron) אז לקבוצה
   const destinationChatId = targetChatId || targetGroupId;
 
   if (!destinationChatId) {
@@ -119,10 +121,10 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string): Prom
     }
 
     const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.videoId}`;
-    const textMessage = `🎬 *סרטון נ נח יומי עבור כבוד הרב:*\n\n` +
-                        `🎥 *${selectedVideo.title}*\n` +
-                        `👤 *ערוץ:* ${selectedVideo.channelTitle}\n` +
-                        `💡 *מדוע נבחר:* ${aiReason}\n\n` +
+    const textMessage = `🎬 סרטון נ נח יומי עבור כבוד הרב:\n\n` +
+                        `🎥 ${selectedVideo.title}\n` +
+                        `👤 ערוץ: ${selectedVideo.channelTitle}\n` +
+                        `💡 מדוע נבחר: ${aiReason}\n\n` +
                         `${videoUrl}`;
 
     await sendTelegramMessage(env, destinationChatId, textMessage, videoUrl);
@@ -251,13 +253,10 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
 async function sendTelegramMessage(env: Env, chatId: string, text: string, videoUrl?: string): Promise<any> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
-  // ניקוי מראש של תווים בעייתיים כדי שהמארקדאון של טלגרם לעולם לא יקרוס
-  const safeText = text.replace(/[*_`#~[\]()]/g, "");
-
   const payload: any = {
     chat_id: chatId,
-    text: safeText,
-    parse_mode: "Markdown"
+    text: text
+    // ללא parse_mode כלל - שולח כטקסט נקי לחלוטין
   };
 
   if (videoUrl) {
@@ -277,8 +276,37 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string, video
 
   const resJson = await res.json() as any;
 
+  // טיפול בעומס / Too Many Requests בצורה חכמה ששומרת על מגבלת הזמן של קלאודפלייר
   if (!resJson.ok) {
     console.warn("Telegram send failed:", resJson.description);
+
+    let waitSeconds = 1;
+    if (resJson.parameters && resJson.parameters.retry_after) {
+      waitSeconds = resJson.parameters.retry_after;
+    } else if (resJson.description) {
+      const match = resJson.description.match(/retry after (\d+)/i);
+      if (match && match[1]) {
+        waitSeconds = parseInt(match[1], 10);
+      }
+    }
+
+    // אם טלגרם מבקש להמתין יותר מדי זמן (למשל מעל 8 שניות), נצמצם ל-5 כדי לא להיחתך ע"י קלאודפלייר
+    if (waitSeconds > 5) {
+      waitSeconds = 5;
+    }
+
+    if (waitSeconds > 0) {
+      console.log(`Waiting ${waitSeconds} seconds as requested by Telegram before retrying...`);
+      await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+    }
+
+    const retryRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+    return retryRes.json();
   }
 
   return resJson;
