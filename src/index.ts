@@ -1,4 +1,3 @@
-// הגדרת ממשקים עבור Cloudflare Worker
 interface CloudflareKV {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
@@ -9,7 +8,7 @@ interface CloudflareExecutionContext {
 }
 
 interface Env {
-  DATABASE?: CloudflareKV; // זיכרון KV למניעת כפילויות 3 הסרטונים האחרונים
+  DATABASE?: CloudflareKV;
   AI: any;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_GROUP_ID?: string;
@@ -31,7 +30,6 @@ interface YouTubeVideoItem {
 }
 
 export default {
-  // 1. קריאה ידנית מהבוט הראשי בפקודה /movi
   async fetch(request: Request, env: Env, ctx: CloudflareExecutionContext): Promise<Response> {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -53,7 +51,6 @@ export default {
     }
   },
 
-  // 2. הרצה אוטומטית ב-03:45 בבוקר שעון ישראל (00:45 UTC)
   async scheduled(event: any, env: Env, ctx: CloudflareExecutionContext): Promise<void> {
     console.log("Cron Trigger fired for Movi Worker:", event.cron);
     const targetGroupId = env.TELEGRAM_GROUP_ID;
@@ -66,10 +63,6 @@ export default {
     ctx.waitUntil(processAndSendYouTubeVideo(env, targetGroupId));
   }
 };
-
-// ============================================================================
-// 🎬 תהליך איסוף, סינון, מניעת כפילויות ושליחת הסרטון
-// ============================================================================
 
 async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempMsgId?: number): Promise<void> {
   const targetGroupId = env.TELEGRAM_GROUP_ID;
@@ -89,7 +82,6 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       return;
     }
 
-    // א. קריאת היסטוריית 3 הסרטונים האחרונים מ-KV
     let sentVideoIds: string[] = [];
     if (env.DATABASE) {
       try {
@@ -103,13 +95,11 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       }
     }
 
-    // ב. סינון החוצה של 3 הסרטונים האחרונים שנשלחו
     const freshVideos = allVideos.filter(v => !sentVideoIds.includes(v.videoId));
     const availableVideos = freshVideos.length > 0 ? freshVideos : allVideos;
 
     console.log(`Available fresh videos for selection: ${availableVideos.length}`);
 
-    // ג. אתחול ברירת המחדל אך ורק מתוך רשימת הסרטונים הטריים!
     let selectedVideo = availableVideos[0];
     let aiReason = "נבחר כסרטון העדכני והחדש ביותר מ-24 השעות האחרונות.";
 
@@ -128,7 +118,6 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       console.warn("AI filtering failed, falling back to top available video:", aiErr);
     }
 
-    // ד. שליחת הסרטון לטלגרם בניתוב חכם לקבוצה
     const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.videoId}`;
     const textMessage = `🎬 *סרטון נ נח יומי עבור כבוד הרב:*\n\n` +
                         `🎥 *${selectedVideo.title}*\n` +
@@ -145,7 +134,6 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
       await sendTelegramVideo(env, targetChatId || targetGroupId!, textMessage, tempMsgId, videoUrl);
     }
 
-    // ה. עדכון ה-KV ושמירת 3 ה-Video IDs האחרונים
     if (env.DATABASE && selectedVideo?.videoId) {
       try {
         const updatedHistory = [selectedVideo.videoId, ...sentVideoIds.filter(id => id !== selectedVideo.videoId)].slice(0, 3);
@@ -166,10 +154,6 @@ async function processAndSendYouTubeVideo(env: Env, targetChatId?: string, tempM
     }
   }
 }
-
-// ============================================================================
-// 🔎 קריאה מול YouTube Data API v3
-// ============================================================================
 
 async function fetchYouTubeVideos(env: Env): Promise<YouTubeVideoItem[]> {
   if (!env.YOUTUBE_API_KEY) {
@@ -202,10 +186,6 @@ async function fetchYouTubeVideos(env: Env): Promise<YouTubeVideoItem[]> {
   })).filter((v: YouTubeVideoItem) => v.videoId.length > 0);
 }
 
-// ============================================================================
-// 🤖 בחירת הסרטון עם AI (OpenRouter + גיבוי ל-Workers AI)
-// ============================================================================
-
 async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Promise<{ videoId: string; reason: string } | null> {
   const systemPrompt = "שמך ששון, מסנן סרטוני יוטיוב מדויק. תפקידך לנתח את רשימת הסרטונים הבאה מ-24 השעות האחרונות בנושא 'נ נח נחמ נחמן מאומן', ולבחור את הסרטון האיכותי, המעורר והמתאים ביותר. השב אך ורק בפורמט JSON תקין ללא שום טקסט נוסף או מארקדאון במבנה: {\"videoId\": \"ID_HERE\", \"reason\": \"נימוק קצר בעברית\"}";
   
@@ -218,7 +198,6 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
 
   let rawAiOutput = "";
 
-  // 1. קריאה מול OpenRouter מול google/gemma-4-26b-a4b-it:free
   try {
     if (env.OPENROUTER_API_KEY) {
       const openRouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -250,7 +229,6 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
     console.warn("OpenRouter Movi AI failed, trying Cloudflare Workers AI fallback...", e);
   }
 
-  // 2. גיבוי מול Cloudflare Workers AI @cf/meta/llama-3.3-70b-instruct-fp8-fast
   if (!rawAiOutput && env.AI) {
     try {
       const cfRes = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
@@ -268,19 +246,16 @@ async function selectBestVideoWithAI(videos: YouTubeVideoItem[], env: Env): Prom
 
   if (rawAiOutput) {
     try {
-      const cleanJson = rawAiOutput.replace(/```json/g, "").replace(/```/g, "").trim();
+      const textOutput = typeof rawAiOutput === 'string' ? rawAiOutput : JSON.stringify(rawAiOutput);
+      const cleanJson = textOutput.replace(/```json/g, "").replace(/```/g, "").trim();
       return JSON.parse(cleanJson);
     } catch (parseErr) {
-      console.error("Failed to parse AI JSON output:", parseErr);
+      console.error("Failed to parse AI JSON output:", parseErr, "Raw output was:", rawAiOutput);
     }
   }
 
   return null;
 }
-
-// ============================================================================
-// 📩 שליחה לטלגרם עם Fallback חסין לשגיאות Markdown בכותרות יוטיוב
-// ============================================================================
 
 async function sendTelegramVideo(env: Env, chatId: string, text: string, messageId?: number, videoUrl?: string): Promise<any> {
   const method = messageId ? "editMessageText" : "sendMessage";
@@ -313,12 +288,11 @@ async function sendTelegramVideo(env: Env, chatId: string, text: string, message
 
   const resJson = await res.json() as any;
 
-  // ⚠️ התיקון: אם טלגרם דוחה עקב תווים מיוחדים בכותרת הסרטון, נשלח שוב כטקסט נקי
   if (!resJson.ok) {
     console.warn("Telegram video send with Markdown failed:", resJson.description, "Retrying without Markdown...");
     const fallbackPayload: any = {
       chat_id: chatId,
-      text: text.replace(/[*_`#~[\]()]/g, "") // ניקוי תווי מארקדאון מיוחדים בכותרות
+      text: text.replace(/[*_`#~[\]()]/g, "")
     };
 
     if (videoUrl) {
